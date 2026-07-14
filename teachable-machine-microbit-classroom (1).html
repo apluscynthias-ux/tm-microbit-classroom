@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>Teachable Machine → micro:bit 連接器（課堂版）</title>
+<style>
+  body { font-family: "Microsoft JhengHei", Arial, sans-serif; text-align: center; padding: 20px; background:#f5f5f5; max-width: 600px; margin: 0 auto;}
+  .setup-box { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); text-align: left; }
+  .setup-box label { display:block; font-weight:bold; margin-top:12px; margin-bottom:4px; }
+  .setup-box input[type=text] { width: 100%; padding: 8px; font-size: 16px; box-sizing: border-box; border:1px solid #ccc; border-radius:6px;}
+  .setup-box small { color:#666; }
+  #webcam-container { margin: 20px auto; }
+  #label-container div { font-size: 20px; margin: 4px; }
+  button { font-size: 18px; padding: 10px 20px; margin: 8px; cursor: pointer; border-radius: 8px; border: 1px solid #888;}
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  #status { font-size: 18px; font-weight: bold; margin-top: 10px; }
+  .connected { color: green; }
+  .disconnected { color: red; }
+  #currentResult { font-size: 28px; font-weight: bold; margin: 15px; }
+  #loadStatus { font-size: 14px; color:#666; margin-top:6px;}
+</style>
+</head>
+<body>
+
+<h2>Teachable Machine → micro:bit 連接器</h2>
+
+<div class="setup-box">
+  <label>1. 貼上 Teachable Machine 模型網址</label>
+  <input type="text" id="modelUrlInput" placeholder="https://teachablemachine.withgoogle.com/models/你的模型ID/">
+  <small>到 Teachable Machine → Export Model → Tensorflow.js → Upload my model，複製產生的網址貼在這裡</small>
+
+  <label>2. 哪一個類別名稱要對應「R」指令（例如哭臉／紅燈）？</label>
+  <input type="text" id="redClassInput" placeholder="例如：Nothing">
+
+  <label>3. 哪一個類別名稱要對應「G」指令（例如笑臉／綠燈）？</label>
+  <input type="text" id="greenClassInput" placeholder="例如：Success">
+
+  <small>類別名稱要跟 Teachable Machine 網站上顯示的完全一樣，包含大小寫與空格</small>
+
+  <div style="margin-top:16px;">
+    <button id="loadModelBtn">載入模型</button>
+  </div>
+  <div id="loadStatus">尚未載入模型</div>
+</div>
+
+<div>
+  <button id="connectBtn">連接 micro:bit (USB)</button>
+  <button id="startBtn" disabled>開始辨識</button>
+  <button id="stopBtn">停止辨識</button>
+</div>
+
+<div id="status" class="disconnected">狀態：尚未連接 micro:bit</div>
+<div id="currentResult">--</div>
+
+<div id="webcam-container"></div>
+<div id="label-container"></div>
+
+<!-- 引入 TensorFlow.js（Teachable Machine 函式庫的底層依賴，必須先載入） -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<!-- 引入 Teachable Machine 官方函式庫 -->
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+<script>
+let model, webcam, labelContainer, maxPredictions;
+let redClassName = "";
+let greenClassName = "";
+
+// ------- micro:bit Serial 連線相關 -------
+let port;
+let writer;
+let isConnected = false;
+let lastSentCommand = "";
+
+// 機率門檻，避免雜訊誤判
+const CONFIDENCE_THRESHOLD = 0.85;
+
+document.getElementById("loadModelBtn").addEventListener("click", loadModel);
+document.getElementById("connectBtn").addEventListener("click", connectMicrobit);
+document.getElementById("startBtn").addEventListener("click", startPrediction);
+document.getElementById("stopBtn").addEventListener("click", stopPrediction);
+
+// ============ 載入模型 ============
+async function loadModel() {
+  const rawUrl = document.getElementById("modelUrlInput").value.trim();
+  redClassName = document.getElementById("redClassInput").value.trim();
+  greenClassName = document.getElementById("greenClassInput").value.trim();
+
+  if (!rawUrl) {
+    alert("請先貼上模型網址");
+    return;
+  }
+  if (!redClassName || !greenClassName) {
+    alert("請填寫 R 與 G 指令分別對應的類別名稱");
+    return;
+  }
+
+  // 確保網址結尾有斜線
+  const URL = rawUrl.endsWith("/") ? rawUrl : rawUrl + "/";
+  const modelURL = URL + "model.json";
+  const metadataURL = URL + "metadata.json";
+
+  const loadStatus = document.getElementById("loadStatus");
+  loadStatus.textContent = "模型載入中，請稍候...";
+
+  try {
+    model = await tmImage.load(modelURL, metadataURL);
+    maxPredictions = model.getTotalClasses();
+    loadStatus.textContent = "✅ 模型載入成功！共 " + maxPredictions + " 個類別，可以開始辨識了";
+    document.getElementById("startBtn").disabled = false;
+  } catch (err) {
+    loadStatus.textContent = "❌ 模型載入失敗，請確認網址是否正確";
+    console.error(err);
+  }
+}
+
+// ============ 連接 micro:bit ============
+async function connectMicrobit() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+
+    const textEncoder = new TextEncoderStream();
+    textEncoder.readable.pipeTo(port.writable);
+    writer = textEncoder.writable.getWriter();
+
+    isConnected = true;
+    const statusDiv = document.getElementById("status");
+    statusDiv.textContent = "狀態：已連接 micro:bit ✅";
+    statusDiv.className = "connected";
+  } catch (err) {
+    alert("連接失敗，請確認已插上 micro:bit USB 線，並使用 Chrome 或 Edge 瀏覽器：\n" + err);
+  }
+}
+
+async function sendCommand(cmd) {
+  if (!isConnected || !writer) return;
+  await writer.write(cmd + "\n");
+}
+
+// ============ 開始辨識（攝影機啟動）============
+async function startPrediction() {
+  if (!model) {
+    alert("請先載入模型");
+    return;
+  }
+  const flip = true;
+  webcam = new tmImage.Webcam(300, 300, flip);
+  await webcam.setup();
+  await webcam.play();
+
+  document.getElementById("webcam-container").innerHTML = "";
+  document.getElementById("webcam-container").appendChild(webcam.canvas);
+
+  labelContainer = document.getElementById("label-container");
+  labelContainer.innerHTML = "";
+  for (let i = 0; i < maxPredictions; i++) {
+    labelContainer.appendChild(document.createElement("div"));
+  }
+
+  running = true;
+  window.requestAnimationFrame(loop);
+}
+
+let running = false;
+async function loop() {
+  if (!running) return;
+  webcam.update();
+  await predict();
+  window.requestAnimationFrame(loop);
+}
+
+async function stopPrediction() {
+  running = false;
+  if (webcam) webcam.stop();
+}
+
+// ============ 核心：辨識並送出指令 ============
+async function predict() {
+  const prediction = await model.predict(webcam.canvas);
+
+  let best = prediction[0];
+  for (let i = 1; i < prediction.length; i++) {
+    if (prediction[i].probability > best.probability) {
+      best = prediction[i];
+    }
+  }
+
+  for (let i = 0; i < maxPredictions; i++) {
+    const classPrediction =
+      prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+    labelContainer.childNodes[i].innerHTML = classPrediction;
+  }
+
+  document.getElementById("currentResult").innerText =
+    best.className + " (" + (best.probability * 100).toFixed(0) + "%)";
+
+  if (best.probability < CONFIDENCE_THRESHOLD) return;
+
+  let command = null;
+  if (best.className === redClassName) {
+    command = "R";
+  } else if (best.className === greenClassName) {
+    command = "G";
+  }
+
+  if (command && command !== lastSentCommand) {
+    await sendCommand(command);
+    lastSentCommand = command;
+    console.log("已送出指令：", command);
+  }
+}
+</script>
+
+</body>
+</html>
