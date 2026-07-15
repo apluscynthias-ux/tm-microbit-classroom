@@ -53,11 +53,9 @@
 
 <div id="label-container"></div>
 
-<!-- 引入 TensorFlow.js 與 Speech Commands（Teachable Machine 聲音函式庫的底層依賴） -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@latest/dist/speech-commands.min.js"></script>
-<!-- 引入 Teachable Machine 聲音官方函式庫 -->
-<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/audio@latest/dist/teachablemachine-audio.min.js"></script>
+<!-- 引入 TensorFlow.js 與 Speech Commands（Teachable Machine 聲音官方採用的底層函式庫） -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
 
 <script>
 let model, labelContainer, maxPredictions;
@@ -102,8 +100,14 @@ async function loadModel() {
   loadStatus.textContent = "模型載入中，請稍候（需要麥克風授權）...";
 
   try {
-    model = await tmAudio.load(modelURL, metadataURL);
-    maxPredictions = model.getTotalClasses();
+    model = speechCommands.create(
+      "BROWSER_FFT",
+      undefined,
+      modelURL,
+      metadataURL
+    );
+    await model.ensureModelLoaded();
+    maxPredictions = model.wordLabels().length;
 
     labelContainer = document.getElementById("label-container");
     labelContainer.innerHTML = "";
