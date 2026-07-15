@@ -70,7 +70,7 @@ let isConnected = false;
 let lastSentCommand = "";
 
 // 機率門檻，避免雜訊誤判（聲音模型建議稍高一點的門檻，減少誤觸發）
-const CONFIDENCE_THRESHOLD = 0.9;
+const CONFIDENCE_THRESHOLD = 0.95;
 
 document.getElementById("loadModelBtn").addEventListener("click", loadModel);
 document.getElementById("connectBtn").addEventListener("click", connectMicrobit);
