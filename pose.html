@@ -73,6 +73,11 @@ let lastSentCommand = "";
 // 機率門檻，避免誤判
 const CONFIDENCE_THRESHOLD = 0.95;
 
+// 連續穩定判斷：同一類別要連續達標幾次，才真正送出指令
+const REQUIRED_CONSECUTIVE = 3;
+let consecutiveClass = null;
+let consecutiveCount = 0;
+
 document.getElementById("loadModelBtn").addEventListener("click", loadModel);
 document.getElementById("connectBtn").addEventListener("click", connectMicrobit);
 document.getElementById("startBtn").addEventListener("click", startPrediction);
@@ -203,7 +208,22 @@ async function predict() {
   // 畫出攝影機畫面 + 骨架點，方便課堂展示 AI 偵測到的重點
   drawPose(pose);
 
-  if (best.probability < CONFIDENCE_THRESHOLD) return;
+  if (best.probability < CONFIDENCE_THRESHOLD) {
+    consecutiveClass = null;
+    consecutiveCount = 0;
+    return;
+  }
+
+  // 累計連續判斷為同一類別的次數
+  if (best.className === consecutiveClass) {
+    consecutiveCount++;
+  } else {
+    consecutiveClass = best.className;
+    consecutiveCount = 1;
+  }
+
+  // 還沒連續達標次數，先不動作
+  if (consecutiveCount < REQUIRED_CONSECUTIVE) return;
 
   let command = null;
   if (best.className === redClassName) {
